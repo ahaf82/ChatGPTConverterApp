@@ -31,7 +31,6 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var statusText: TextView
     private lateinit var selectFileButton: Button
-    private lateinit var selectJsonButton: Button
     private lateinit var actionButtonsLayout: LinearLayout
     private lateinit var btnSaveToDownloads: Button
     private lateinit var btnUploadToDrive: Button
@@ -42,10 +41,6 @@ class MainActivity : AppCompatActivity() {
     // ZIP picker
     private val pickZip = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let { processZip(it) }
-    }
-    // JSON picker
-    private val pickJson = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        uri?.let { processJson(it) }
     }
     // Google Sign-In result
     private val signInLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -65,13 +60,11 @@ class MainActivity : AppCompatActivity() {
 
         statusText        = findViewById(R.id.statusText)
         selectFileButton  = findViewById(R.id.selectFileButton)
-        selectJsonButton  = findViewById(R.id.selectJsonButton)
         actionButtonsLayout = findViewById(R.id.actionButtonsLayout)
         btnSaveToDownloads  = findViewById(R.id.btnSaveToDownloads)
         btnUploadToDrive    = findViewById(R.id.btnShareToDrive)
 
         selectFileButton.setOnClickListener { pickZip.launch("application/zip") }
-        selectJsonButton.setOnClickListener { pickJson.launch("application/json") }
         btnSaveToDownloads.setOnClickListener { saveToDownloads() }
         btnUploadToDrive.setOnClickListener   { startDriveSignIn() }
 
@@ -82,7 +75,7 @@ class MainActivity : AppCompatActivity() {
             } else {
                 @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_STREAM)
             }
-            uri?.let { if (it.toString().contains("json")) processJson(it) else processZip(it) }
+            uri?.let { processZip(it) }
         }
     }
 
@@ -198,6 +191,7 @@ class MainActivity : AppCompatActivity() {
                 // Create root folder: ChatGPT Archive
                 val rootFolderId = uploader.findOrCreateFolder("ChatGPT Archive")
 
+                // Upload conversations as Google Docs
                 var uploaded = 0
                 for ((index, file) in pendingFiles.withIndex()) {
                     val docTitle = file.docTitle.ifBlank { file.filename.removeSuffix(".html") }
@@ -205,13 +199,31 @@ class MainActivity : AppCompatActivity() {
                     uploaded++
 
                     if (index % 5 == 0) {
-                        val msg = "Uploading… $uploaded / ${pendingFiles.size}"
+                        val msg = "Uploading docs… $uploaded / ${pendingFiles.size}"
                         withContext(Dispatchers.Main) { statusText.text = msg }
                     }
                 }
 
+                // Upload media files into a subfolder
+                var uploadedMedia = 0
+                if (extractedMediaFiles.isNotEmpty()) {
+                    val mediaFolderId = uploader.findOrCreateFolder("Media", rootFolderId)
+                    for ((index, mediaFile) in extractedMediaFiles.withIndex()) {
+                        try {
+                            uploader.uploadMediaFile(mediaFile, mediaFolderId)
+                            uploadedMedia++
+                        } catch (_: Exception) { }
+
+                        if (index % 10 == 0) {
+                            val msg = "Uploading media… $uploadedMedia / ${extractedMediaFiles.size}"
+                            withContext(Dispatchers.Main) { statusText.text = msg }
+                        }
+                    }
+                }
+
                 withContext(Dispatchers.Main) {
-                    statusText.text = "Done! Created $uploaded Google Docs in 'ChatGPT Archive'."
+                    val mediaMsg = if (uploadedMedia > 0) " + $uploadedMedia media files" else ""
+                    statusText.text = "Done! Created $uploaded Google Docs$mediaMsg in 'ChatGPT Archive'."
                     Toast.makeText(this@MainActivity, "Uploaded to Drive!", Toast.LENGTH_LONG).show()
                     setButtonsEnabled(true)
                 }
@@ -279,8 +291,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setButtonsEnabled(enabled: Boolean) {
-        selectFileButton.isEnabled  = enabled
-        selectJsonButton.isEnabled  = enabled
+        selectFileButton.isEnabled   = enabled
         btnSaveToDownloads.isEnabled = enabled
         btnUploadToDrive.isEnabled   = enabled
     }

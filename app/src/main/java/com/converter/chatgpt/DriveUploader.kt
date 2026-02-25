@@ -9,6 +9,7 @@ import com.google.api.services.drive.Drive
 import com.google.api.services.drive.DriveScopes
 import com.google.api.services.drive.model.File
 import java.io.ByteArrayInputStream
+import java.io.FileInputStream
 
 /**
  * Uploads HTML content to Google Drive as native Google Docs.
@@ -73,13 +74,40 @@ class DriveUploader(context: Context, account: Account) {
             parents = listOf(folderId)
         }
 
+        val htmlBytes = html.toByteArray(Charsets.UTF_8)
         val content = com.google.api.client.http.InputStreamContent(
             "text/html",
-            ByteArrayInputStream(html.toByteArray(Charsets.UTF_8))
-        )
+            ByteArrayInputStream(htmlBytes)
+        ).apply { length = htmlBytes.size.toLong() }
 
         return driveService.files().create(meta, content)
-            .setFields("id, webViewLink")
+            .setFields("id")
+            .execute()
+            .id
+    }
+
+    fun uploadMediaFile(localFile: java.io.File, folderId: String): String {
+        val mimeType = when (localFile.extension.lowercase()) {
+            "jpg", "jpeg" -> "image/jpeg"
+            "png"         -> "image/png"
+            "gif"         -> "image/gif"
+            "webp"        -> "image/webp"
+            "mp4"         -> "video/mp4"
+            else          -> "application/octet-stream"
+        }
+
+        val meta = File().apply {
+            name = localFile.name
+            parents = listOf(folderId)
+        }
+
+        val content = com.google.api.client.http.InputStreamContent(
+            mimeType,
+            FileInputStream(localFile)
+        ).apply { length = localFile.length() }
+
+        return driveService.files().create(meta, content)
+            .setFields("id")
             .execute()
             .id
     }
