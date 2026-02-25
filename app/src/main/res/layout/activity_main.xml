@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:gravity="center_horizontal">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="ChatGPT to Gemini"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="8dp"/>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Convert your ChatGPT export to structured Markdown for Gemini"
+        android:textSize="14sp"
+        android:textColor="?android:attr/textColorSecondary"
+        android:gravity="center"
+        android:layout_marginBottom="32dp"/>
+
+    <Button
+        android:id="@+id/selectFileButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Select ChatGPT Export (ZIP)"
+        android:textSize="16sp"
+        android:padding="16dp"
+        android:layout_marginBottom="8dp"/>
+
+    <Button
+        android:id="@+id/selectJsonButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Or: Select conversations.json"
+        android:textSize="14sp"
+        android:padding="12dp"
+        android:layout_marginBottom="24dp"/>
+
+    <LinearLayout
+        android:id="@+id/actionButtonsLayout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:visibility="gone"
+        android:layout_marginBottom="24dp">
+
+        <Button
+            android:id="@+id/btnSaveToDownloads"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:text="Save to Downloads"
+            android:layout_weight="1"
+            android:layout_marginEnd="8dp"/>
+
+        <Button
+            android:id="@+id/btnShareToDrive"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:text="Upload to Drive"
+            android:layout_weight="1"
+            android:backgroundTint="#4285F4"
+            android:textColor="#FFFFFF"/>
+    </LinearLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Select a ZIP file or conversations.json to begin.\n\nTip: Save to Downloads, then move to Drive via Files app."
+            android:textSize="14sp"
+            android:padding="16dp"
+            android:background="?attr/selectableItemBackground"
+            android:minHeight="120dp"/>
+    </ScrollView>
+
+</LinearLayout>
