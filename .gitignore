@@ -9,6 +9,9 @@ app/build/
 *.iml
 local.properties
 
+# Release builds
+app/release/
+
 # Signing keys - NEVER commit these
 *.jks
 *.keystore

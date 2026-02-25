@@ -1,5 +1,6 @@
 package com.converter.chatgpt
 
+import android.accounts.Account
 import android.content.ContentValues
 import android.content.Intent
 import android.net.Uri
@@ -14,9 +15,11 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.FileProvider
-import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.Scope
+import com.google.api.services.drive.DriveScopes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -31,109 +34,92 @@ class MainActivity : AppCompatActivity() {
     private lateinit var selectJsonButton: Button
     private lateinit var actionButtonsLayout: LinearLayout
     private lateinit var btnSaveToDownloads: Button
-    private lateinit var btnShareToDrive: Button
+    private lateinit var btnUploadToDrive: Button
 
     private var pendingFiles: List<ChatGPTConverter.ConversationFile> = emptyList()
     private var extractedMediaFiles: MutableList<File> = mutableListOf()
 
-    private val pickZipLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        uri?.let { processZipFile(it) }
+    // ZIP picker
+    private val pickZip = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { processZip(it) }
     }
-
-    private val pickJsonLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        uri?.let { processJsonFile(it) }
+    // JSON picker
+    private val pickJson = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { processJson(it) }
     }
-
-    private val pickFolderLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
-        uri?.let { saveFilesToFolder(it) }
+    // Google Sign-In result
+    private val signInLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+        try {
+            val account = task.getResult(Exception::class.java)
+            account?.account?.let { uploadToDriveWithAccount(it) }
+        } catch (e: Exception) {
+            statusText.text = "Sign-in failed: ${e.message}"
+            setButtonsEnabled(true)
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        statusText = findViewById(R.id.statusText)
-        selectFileButton = findViewById(R.id.selectFileButton)
-        selectJsonButton = findViewById(R.id.selectJsonButton)
+        statusText        = findViewById(R.id.statusText)
+        selectFileButton  = findViewById(R.id.selectFileButton)
+        selectJsonButton  = findViewById(R.id.selectJsonButton)
         actionButtonsLayout = findViewById(R.id.actionButtonsLayout)
-        btnSaveToDownloads = findViewById(R.id.btnSaveToDownloads)
-        btnShareToDrive = findViewById(R.id.btnShareToDrive)
+        btnSaveToDownloads  = findViewById(R.id.btnSaveToDownloads)
+        btnUploadToDrive    = findViewById(R.id.btnShareToDrive)
 
-        selectFileButton.setOnClickListener {
-            pickZipLauncher.launch("application/zip")
-        }
+        selectFileButton.setOnClickListener { pickZip.launch("application/zip") }
+        selectJsonButton.setOnClickListener { pickJson.launch("application/json") }
+        btnSaveToDownloads.setOnClickListener { saveToDownloads() }
+        btnUploadToDrive.setOnClickListener   { startDriveSignIn() }
 
-        selectJsonButton.setOnClickListener {
-            pickJsonLauncher.launch("application/json")
-        }
-
-        btnSaveToDownloads.setOnClickListener {
-            saveToDownloads()
-        }
-
-        btnShareToDrive.setOnClickListener {
-            shareFilesToDrive()
-        }
-
+        // Handle share-to-app intent
         if (intent?.action == Intent.ACTION_SEND) {
-            val streamUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
             } else {
-                @Suppress("DEPRECATION")
-                intent.getParcelableExtra(Intent.EXTRA_STREAM)
+                @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_STREAM)
             }
-            streamUri?.let { uri ->
-                when {
-                    uri.toString().contains("json") -> processJsonFile(uri)
-                    else -> processZipFile(uri)
-                }
-            }
+            uri?.let { if (it.toString().contains("json")) processJson(it) else processZip(it) }
         }
     }
 
-    private fun processZipFile(uri: Uri) {
-        statusText.text = "Processing..."
+    // ── Processing ────────────────────────────────────────────────────────────
+
+    private fun processZip(uri: Uri) {
+        statusText.text = "Processing ZIP…"
         setButtonsEnabled(false)
         extractedMediaFiles.clear()
 
         lifecycleScope.launch(Dispatchers.IO) {
-            var tempFile: File? = null
+            var tmpZip: File? = null
             try {
-                // Copy URI to temp file first - more reliable than streaming from content providers
-                tempFile = File.createTempFile("chatgpt_export", ".zip", cacheDir)
-                contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(tempFile).use { output ->
-                        input.copyTo(output)
+                tmpZip = File.createTempFile("chatgpt_export", ".zip", cacheDir)
+                contentResolver.openInputStream(uri)?.use { it.copyTo(FileOutputStream(tmpZip)) }
+
+                ZipFile(tmpZip).use { zip ->
+                    // Parse conversations
+                    val jsonEntry = zip.entries().toList()
+                        .find { it.name.endsWith("conversations.json") }
+                        ?: throw Exception("conversations.json not found in ZIP")
+
+                    val json = zip.getInputStream(jsonEntry).bufferedReader().readText()
+                    val files = ChatGPTConverter().parseConversations(json)
+
+                    // Extract media
+                    val mediaDir = File(cacheDir, "extracted_media").also {
+                        it.deleteRecursively(); it.mkdirs()
                     }
-                } ?: throw IllegalStateException("Could not read file")
-
-                ZipFile(tempFile).use { zip ->
-                    // 1. Find and parse conversations.json
-                    val jsonEntry = zip.entries().toList().find { it.name.endsWith("conversations.json") }
-                        ?: throw IllegalStateException("conversations.json not found in ZIP")
-
-                    val jsonString = zip.getInputStream(jsonEntry).bufferedReader().readText()
-                    val converter = ChatGPTConverter()
-                    val files = converter.parseConversations(jsonString)
-
-                    // 2. Extract images/videos
-                    val mediaDir = File(cacheDir, "extracted_media")
-                    mediaDir.deleteRecursively()
-                    mediaDir.mkdirs()
-
-                    val mediaExtensions = listOf(".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4")
+                    val mediaExt = listOf(".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4")
                     var mediaCount = 0
-                    
+
                     zip.entries().asSequence().forEach { entry ->
-                        if (!entry.isDirectory && mediaExtensions.any { entry.name.endsWith(it, ignoreCase = true) }) {
-                            val fileName = File(entry.name).name // Flatten path
-                            val destFile = File(mediaDir, fileName)
-                            zip.getInputStream(entry).use { input ->
-                                FileOutputStream(destFile).use { output ->
-                                    input.copyTo(output)
-                                }
-                            }
-                            extractedMediaFiles.add(destFile)
+                        if (!entry.isDirectory && mediaExt.any { entry.name.endsWith(it, true) }) {
+                            val dest = File(mediaDir, File(entry.name).name)
+                            zip.getInputStream(entry).use { it.copyTo(FileOutputStream(dest)) }
+                            extractedMediaFiles.add(dest)
                             mediaCount++
                         }
                     }
@@ -142,38 +128,31 @@ class MainActivity : AppCompatActivity() {
                         pendingFiles = files
                         setButtonsEnabled(true)
                         actionButtonsLayout.visibility = View.VISIBLE
-                        statusText.text = "Found ${files.size} conversations and $mediaCount media files.\n\nChoose an option below."
+                        statusText.text = "Found ${files.size} conversations" +
+                                (if (mediaCount > 0) " + $mediaCount media files" else "") +
+                                ".\n\nChoose an option below."
                     }
                 }
             } catch (e: java.util.zip.ZipException) {
-                withContext(Dispatchers.Main) {
-                    setButtonsEnabled(true)
-                    statusText.text = "ZIP not supported.\n\nTry selecting conversations.json directly."
-                }
+                showError("Invalid ZIP — try selecting conversations.json directly.")
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    setButtonsEnabled(true)
-                    statusText.text = "Error: ${e.message}"
-                }
+                showError("Error: ${e.message}")
             } finally {
-                tempFile?.delete()
+                tmpZip?.delete()
             }
         }
     }
 
-    private fun processJsonFile(uri: Uri) {
-        statusText.text = "Processing..."
+    private fun processJson(uri: Uri) {
+        statusText.text = "Processing JSON…"
         setButtonsEnabled(false)
         extractedMediaFiles.clear()
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val jsonString = contentResolver.openInputStream(uri)?.bufferedReader()?.readText()
-                    ?: throw IllegalStateException("Could not read file")
-
-                val converter = ChatGPTConverter()
-                val files = converter.parseConversations(jsonString)
-
+                val json = contentResolver.openInputStream(uri)?.bufferedReader()?.readText()
+                    ?: throw Exception("Could not read file")
+                val files = ChatGPTConverter().parseConversations(json)
                 withContext(Dispatchers.Main) {
                     pendingFiles = files
                     setButtonsEnabled(true)
@@ -181,237 +160,128 @@ class MainActivity : AppCompatActivity() {
                     statusText.text = "Found ${files.size} conversations.\n\nChoose an option below."
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    setButtonsEnabled(true)
-                    statusText.text = "Error: ${e.message}\n\nCheck if valid JSON."
-                }
+                showError("Error: ${e.message}")
             }
         }
     }
 
-    private fun saveFilesToFolder(rootUri: Uri) {
+    // ── Upload to Google Drive as Google Docs ─────────────────────────────────
+
+    private fun startDriveSignIn() {
         if (pendingFiles.isEmpty()) return
 
-        statusText.text = "Saving files..."
+        // Check if already signed in
+        val existing = GoogleSignIn.getLastSignedInAccount(this)
+        if (existing?.account != null &&
+            GoogleSignIn.hasPermissions(existing, Scope(DriveScopes.DRIVE_FILE))) {
+            uploadToDriveWithAccount(existing.account!!)
+            return
+        }
+
+        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestEmail()
+            .requestScopes(Scope(DriveScopes.DRIVE_FILE))
+            .build()
+
+        val client = GoogleSignIn.getClient(this, gso)
+        signInLauncher.launch(client.signInIntent)
+    }
+
+    private fun uploadToDriveWithAccount(account: Account) {
+        statusText.text = "Uploading to Google Drive…"
         setButtonsEnabled(false)
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val rootDir = DocumentFile.fromTreeUri(this@MainActivity, rootUri)
-                if (rootDir == null || !rootDir.exists()) {
-                    withContext(Dispatchers.Main) {
-                        statusText.text = "Error: Could not access folder."
-                        setButtonsEnabled(true)
-                    }
-                    return@launch
-                }
+                val uploader = DriveUploader(this@MainActivity, account)
 
-                var savedCount = 0
-                
-                // Save Markdown files
-                for (file in pendingFiles) {
-                    val newFile = rootDir.createFile("text/markdown", file.filename)
-                    if (newFile != null && newFile.uri != null) {
-                        contentResolver.openOutputStream(newFile.uri)?.use { output ->
-                            output.write(file.content.toByteArray(Charsets.UTF_8))
-                        }
-                        savedCount++
-                    }
-                }
-                
-                // Save Media files
-                for (media in extractedMediaFiles) {
-                    // Mime type guess
-                    val mimeType = when (media.extension.lowercase()) {
-                        "jpg", "jpeg" -> "image/jpeg"
-                        "png" -> "image/png"
-                        "webp" -> "image/webp"
-                        "mp4" -> "video/mp4"
-                        else -> "application/octet-stream"
-                    }
-                    
-                    val newFile = rootDir.createFile(mimeType, media.name)
-                    if (newFile != null && newFile.uri != null) {
-                        contentResolver.openOutputStream(newFile.uri)?.use { output ->
-                            media.inputStream().use { input ->
-                                input.copyTo(output)
-                            }
-                        }
-                        savedCount++
+                // Create root folder: ChatGPT Archive
+                val rootFolderId = uploader.findOrCreateFolder("ChatGPT Archive")
+
+                var uploaded = 0
+                for ((index, file) in pendingFiles.withIndex()) {
+                    val docTitle = file.docTitle.ifBlank { file.filename.removeSuffix(".html") }
+                    uploader.uploadAsGoogleDoc(docTitle, file.content, rootFolderId)
+                    uploaded++
+
+                    if (index % 5 == 0) {
+                        val msg = "Uploading… $uploaded / ${pendingFiles.size}"
+                        withContext(Dispatchers.Main) { statusText.text = msg }
                     }
                 }
 
                 withContext(Dispatchers.Main) {
-                    statusText.text = "Done! Saved $savedCount files to your folder."
-                    Toast.makeText(this@MainActivity, "Saved!", Toast.LENGTH_LONG).show()
+                    statusText.text = "Done! Created $uploaded Google Docs in 'ChatGPT Archive'."
+                    Toast.makeText(this@MainActivity, "Uploaded to Drive!", Toast.LENGTH_LONG).show()
                     setButtonsEnabled(true)
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    statusText.text = "Save error: ${e.message}"
-                    setButtonsEnabled(true)
-                }
+                showError("Upload error: ${e.message}")
             }
         }
     }
+
+    // ── Save to Downloads (HTML files) ────────────────────────────────────────
 
     private fun saveToDownloads() {
         if (pendingFiles.isEmpty()) return
-
-        statusText.text = "Saving to Downloads/ChatGPT_Archive..."
+        statusText.text = "Saving to Downloads/ChatGPT_Archive…"
         setButtonsEnabled(false)
 
         lifecycleScope.launch(Dispatchers.IO) {
-            var savedCount = 0
+            var saved = 0
             try {
-                val folderName = "ChatGPT_Archive"
-
-                // Save Markdown
                 for (file in pendingFiles) {
                     val values = ContentValues().apply {
                         put(MediaStore.MediaColumns.DISPLAY_NAME, file.filename)
-                        put(MediaStore.MediaColumns.MIME_TYPE, "text/markdown")
+                        put(MediaStore.MediaColumns.MIME_TYPE, "text/html")
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/$folderName")
+                            put(MediaStore.MediaColumns.RELATIVE_PATH,
+                                "${Environment.DIRECTORY_DOWNLOADS}/ChatGPT_Archive")
                             put(MediaStore.MediaColumns.IS_PENDING, 1)
                         }
                     }
-
-                    val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                         contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                    } else {
-                         null
-                    }
+                    val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                        contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    else null
 
                     if (uri != null) {
-                        contentResolver.openOutputStream(uri)?.use { output ->
-                            output.write(file.content.toByteArray(Charsets.UTF_8))
-                        }
-                        
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            values.clear()
-                            values.put(MediaStore.MediaColumns.IS_PENDING, 0)
-                            contentResolver.update(uri, values, null, null)
-                        }
-                        savedCount++
-                    }
-                }
-                
-                // Save Media
-                for (media in extractedMediaFiles) {
-                    val mimeType = when (media.extension.lowercase()) {
-                        "jpg", "jpeg" -> "image/jpeg"
-                        "png" -> "image/png"
-                        "mp4" -> "video/mp4"
-                        else -> "image/jpeg"
-                    }
-                    
-                    val values = ContentValues().apply {
-                        put(MediaStore.MediaColumns.DISPLAY_NAME, media.name)
-                        put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/$folderName")
-                            put(MediaStore.MediaColumns.IS_PENDING, 1)
-                        }
-                    }
-                    
-                    val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                         contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                    } else { null } // Skip older android for brevity in this snippet
-
-                    if (uri != null) {
-                        contentResolver.openOutputStream(uri)?.use { output ->
-                            media.inputStream().use { input -> input.copyTo(output) }
+                        contentResolver.openOutputStream(uri)?.use {
+                            it.write(file.content.toByteArray(Charsets.UTF_8))
                         }
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                             values.clear()
                             values.put(MediaStore.MediaColumns.IS_PENDING, 0)
                             contentResolver.update(uri, values, null, null)
                         }
-                        savedCount++
+                        saved++
+                    }
+                    if (saved % 10 == 0) withContext(Dispatchers.Main) {
+                        statusText.text = "Saving… $saved / ${pendingFiles.size}"
                     }
                 }
-
                 withContext(Dispatchers.Main) {
-                    statusText.text = "Done! Saved $savedCount files."
-                    Toast.makeText(this@MainActivity, "Saved to Downloads!", Toast.LENGTH_LONG).show()
+                    statusText.text = "Saved $saved HTML files to Downloads/ChatGPT_Archive."
+                    Toast.makeText(this@MainActivity, "Saved!", Toast.LENGTH_SHORT).show()
                     setButtonsEnabled(true)
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    statusText.text = "Save error: ${e.message}"
-                    setButtonsEnabled(true)
-                }
+                showError("Save error: ${e.message}")
             }
         }
     }
 
-    private fun shareFilesToDrive() {
-        if (pendingFiles.isEmpty()) return
-        statusText.text = "Preparing files for Drive..."
-        setButtonsEnabled(false)
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                // 1. Create a shared folder in cache
-                val sharedDir = File(cacheDir, "shared_chats")
-                sharedDir.mkdirs()
-                sharedDir.listFiles()?.forEach { it.delete() } // Clean up
-
-                val uris = ArrayList<Uri>()
-                var count = 0
-
-                // Add Markdown files (Limit 100)
-                val filesToShare = pendingFiles.take(100) 
-                for (file in filesToShare) {
-                    val tempFile = File(sharedDir, file.filename)
-                    FileOutputStream(tempFile).use { 
-                        it.write(file.content.toByteArray(Charsets.UTF_8)) 
-                    }
-                    val uri = FileProvider.getUriForFile(this@MainActivity, "${packageName}.fileprovider", tempFile)
-                    uris.add(uri)
-                    count++
-                }
-                
-                // Add Media files (Limit 50 to avoid crash)
-                val mediaToShare = extractedMediaFiles.take(50)
-                for (media in mediaToShare) {
-                    val tempFile = File(sharedDir, media.name)
-                    media.copyTo(tempFile, overwrite = true)
-                    val uri = FileProvider.getUriForFile(this@MainActivity, "${packageName}.fileprovider", tempFile)
-                    uris.add(uri)
-                    count++
-                }
-
-                withContext(Dispatchers.Main) {
-                    val shareIntent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-                        type = "*/*" // Mixed content
-                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    
-                    // Show "Upload to Drive" in share sheet
-                    startActivity(Intent.createChooser(shareIntent, "Upload to Drive"))
-                    
-                    statusText.text = "Ready! Select 'Drive' to upload $count files."
-                    if (pendingFiles.size > 100 || extractedMediaFiles.size > 50) {
-                        Toast.makeText(this@MainActivity, "Shared first batch of files.", Toast.LENGTH_LONG).show()
-                    }
-                    setButtonsEnabled(true)
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    statusText.text = "Share error: ${e.message}"
-                    setButtonsEnabled(true)
-                }
-            }
-        }
+    private suspend fun showError(msg: String) = withContext(Dispatchers.Main) {
+        statusText.text = msg
+        setButtonsEnabled(true)
     }
 
     private fun setButtonsEnabled(enabled: Boolean) {
-        selectFileButton.isEnabled = enabled
-        selectJsonButton.isEnabled = enabled
+        selectFileButton.isEnabled  = enabled
+        selectJsonButton.isEnabled  = enabled
         btnSaveToDownloads.isEnabled = enabled
-        btnShareToDrive.isEnabled = enabled
+        btnUploadToDrive.isEnabled   = enabled
     }
 }

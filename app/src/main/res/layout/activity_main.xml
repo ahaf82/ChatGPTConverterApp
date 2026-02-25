@@ -61,7 +61,7 @@
             android:id="@+id/btnShareToDrive"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:text="Upload to Drive"
+            android:text="Upload as Google Docs"
             android:layout_weight="1"
             android:backgroundTint="#4285F4"
             android:textColor="#FFFFFF"/>
@@ -77,7 +77,7 @@
             android:id="@+id/statusText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Select a ZIP file or conversations.json to begin.\n\nTip: Save to Downloads, then move to Drive via Files app."
+            android:text="Select a ChatGPT export ZIP to begin.\n\nConversations will be uploaded as Google Docs to your Drive."
             android:textSize="14sp"
             android:padding="16dp"
             android:background="?attr/selectableItemBackground"
