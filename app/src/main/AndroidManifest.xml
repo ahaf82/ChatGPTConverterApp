@@ -2,16 +2,22 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Required on Android 13+ to post any notification (including foreground service) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AppCompat.Light.DarkActionBar">
+        android:theme="@style/Theme.Material3.Light.NoActionBar">
+
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -22,6 +28,12 @@
                 <data android:mimeType="application/zip" />
             </intent-filter>
         </activity>
+
+        <!-- Foreground service that keeps uploads alive when app is backgrounded -->
+        <service
+            android:name=".UploadService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
 
         <provider
             android:name="androidx.core.content.FileProvider"
