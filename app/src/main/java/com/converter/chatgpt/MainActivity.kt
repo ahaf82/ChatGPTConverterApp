@@ -48,8 +48,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnSave:          MaterialButton
     private lateinit var btnUpload:        MaterialButton
 
-    private var timerJob:      Job? = null
-    private var mediaTimerJob: Job? = null
+    private var timerJob:          Job? = null
+    private var timerStartMs:      Long = 0L
+    private var mediaTimerJob:     Job? = null
 
     // ZIP picker
     private val pickZip = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -153,20 +154,29 @@ class MainActivity : AppCompatActivity() {
                     current = p.current, total = p.total,
                     message = p.message
                 )
-                startTimerIfNeeded()
+                ensureTimerRunningFrom(ProgressState.operationStartMs)
                 actionButtons.visibility = View.GONE
                 setButtonsEnabled(false)
             }
 
             ProgressState.Phase.UPLOADING -> {
                 val mediaStillUploading = p.mediaTotal > 0 && p.mediaCurrent < p.mediaTotal
-                showProgressCard(
-                    title = "💬 Uploading conversations…",
-                    indeterminate = mediaStillUploading,
-                    current = p.current, total = p.total,
-                    message = if (mediaStillUploading) "" else p.message
-                )
-                startTimerIfNeeded()
+                if (mediaStillUploading) {
+                    // Media is still uploading — hide the conversations card and keep its
+                    // timer stopped. The media card (managed by applyMediaCard) is sufficient.
+                    progressCard.visibility = View.GONE
+                } else {
+                    showProgressCard(
+                        title = "💬 Uploading conversations…",
+                        indeterminate = (p.total == 0 || p.current == 0),
+                        current = p.current, total = p.total,
+                        message = p.message
+                    )
+                    // Start/continue the conversations timer from the moment Step 2 began,
+                    // not from the overall operation start (which includes media upload time).
+                    val convStart = ProgressState.conversationStartMs
+                    ensureTimerRunningFrom(if (convStart > 0L) convStart else ProgressState.operationStartMs)
+                }
                 actionButtons.visibility = View.GONE
                 setButtonsEnabled(false)
             }
@@ -178,7 +188,7 @@ class MainActivity : AppCompatActivity() {
                     current = p.current, total = p.total,
                     message = p.message
                 )
-                startTimerIfNeeded()
+                ensureTimerRunningFrom(ProgressState.operationStartMs)
                 actionButtons.visibility = View.GONE
                 setButtonsEnabled(false)
             }
@@ -292,14 +302,20 @@ class MainActivity : AppCompatActivity() {
 
     // ── Timer ─────────────────────────────────────────────────────────────────
 
-    private fun startTimerIfNeeded() {
-        if (timerJob?.isActive == true) return
-        // Read start time from ProgressState (set by the service), not from a local field.
-        // This ensures the timer shows the correct total elapsed time even after the Activity
-        // was paused/resumed, which would have cancelled the previous timerJob.
+    /**
+     * Starts (or restarts) the conversations-card timer from [startMs].
+     * If a timer is already running from the same start time it is left untouched,
+     * so repeated calls during steady-state updates are cheap.
+     * If the phase changes (e.g. scan → conversations), the old timer is cancelled
+     * and a new one begins from the new [startMs].
+     */
+    private fun ensureTimerRunningFrom(startMs: Long) {
+        if (timerJob?.isActive == true && timerStartMs == startMs) return
+        timerJob?.cancel()
+        timerStartMs = startMs
         timerJob = lifecycleScope.launch {
             while (true) {
-                val elapsed = (System.currentTimeMillis() - ProgressState.operationStartMs) / 1000
+                val elapsed = (System.currentTimeMillis() - startMs) / 1000
                 val mins    = elapsed / 60
                 val secs    = elapsed % 60
                 timerText.text = "⏱ %02d:%02d".format(mins, secs)
@@ -310,7 +326,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopTimer() {
         timerJob?.cancel()
-        timerJob = null
+        timerJob     = null
+        timerStartMs = 0L
     }
 
     private fun startMediaTimerIfNeeded() {

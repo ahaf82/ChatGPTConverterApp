@@ -368,6 +368,7 @@ class UploadService : Service() {
                 }
 
                 // ── Step 2: Upload conversation documents ─────────────────
+                ProgressState.conversationStartMs = System.currentTimeMillis()
                 var uploaded = 0
                 var skipped  = 0
 

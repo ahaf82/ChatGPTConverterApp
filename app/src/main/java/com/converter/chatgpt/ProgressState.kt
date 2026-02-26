@@ -26,6 +26,13 @@ object ProgressState {
      */
     @Volatile var mediaStartMs: Long = 0L
 
+    /**
+     * Wall-clock time (ms) when conversation document uploading started (Step 2).
+     * Used to drive the conversations-card timer independently from the media timer.
+     * 0 until conversation upload begins.
+     */
+    @Volatile var conversationStartMs: Long = 0L
+
     data class Progress(
         val phase: Phase = Phase.IDLE,
 
