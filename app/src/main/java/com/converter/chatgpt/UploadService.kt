@@ -322,12 +322,16 @@ class UploadService : Service() {
                     var mediaUploaded = 0
                     var mediaFailed   = 0
 
-                    // Emit immediately so the media card appears on the first file
+                    // Record start time for the media card's own timer
+                    ProgressState.mediaStartMs = System.currentTimeMillis()
+
+                    // Emit immediately so the media card appears; message is intentionally
+                    // empty here — it belongs to the conversations card, not the media card.
                     ProgressState.update(ProgressState.Progress(
                         phase        = ProgressState.Phase.UPLOADING,
                         current      = 0, total = total,
                         mediaCurrent = 0, mediaTotal = mediaMap.size,
-                        message      = "Uploading media 0 / ${mediaMap.size}…"
+                        message      = ""
                     ))
                     updateNotif("Uploading media 0 / ${mediaMap.size}…")
 
@@ -354,8 +358,7 @@ class UploadService : Service() {
                                 phase        = ProgressState.Phase.UPLOADING,
                                 current      = 0, total = total,
                                 mediaCurrent = done, mediaTotal = mediaMap.size,
-                                message      = "Uploading media $mediaUploaded / ${mediaMap.size}" +
-                                        if (mediaFailed > 0) " ($mediaFailed skipped)" else "…"
+                                message      = ""
                             ))
                             updateNotif("Uploading media $done / ${mediaMap.size}…")
                         }

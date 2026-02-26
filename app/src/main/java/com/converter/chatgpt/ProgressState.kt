@@ -19,6 +19,13 @@ object ProgressState {
      */
     @Volatile var operationStartMs: Long = 0L
 
+    /**
+     * Wall-clock time (ms) when the media pre-upload step started.
+     * Used to drive a dedicated timer in the media progress card.
+     * 0 means media upload has not started yet.
+     */
+    @Volatile var mediaStartMs: Long = 0L
+
     data class Progress(
         val phase: Phase = Phase.IDLE,
 

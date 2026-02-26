@@ -33,10 +33,11 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
 
     private lateinit var selectFileButton:  MaterialButton
-    private lateinit var mediaCard:         MaterialCardView
-    private lateinit var mediaPhaseLabel:   TextView
-    private lateinit var mediaProgressBar:  LinearProgressIndicator
+    private lateinit var mediaCard:          MaterialCardView
+    private lateinit var mediaPhaseLabel:    TextView
+    private lateinit var mediaProgressBar:   LinearProgressIndicator
     private lateinit var mediaProgressCount: TextView
+    private lateinit var mediaTimerText:     TextView
     private lateinit var progressCard:     MaterialCardView
     private lateinit var phaseLabel:       TextView
     private lateinit var progressBar:      LinearProgressIndicator
@@ -47,7 +48,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnSave:          MaterialButton
     private lateinit var btnUpload:        MaterialButton
 
-    private var timerJob: Job? = null
+    private var timerJob:      Job? = null
+    private var mediaTimerJob: Job? = null
 
     // ZIP picker
     private val pickZip = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -73,10 +75,11 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         selectFileButton  = findViewById(R.id.selectFileButton)
-        mediaCard         = findViewById(R.id.mediaCard)
-        mediaPhaseLabel   = findViewById(R.id.mediaPhaseLabel)
-        mediaProgressBar  = findViewById(R.id.mediaProgressBar)
+        mediaCard          = findViewById(R.id.mediaCard)
+        mediaPhaseLabel    = findViewById(R.id.mediaPhaseLabel)
+        mediaProgressBar   = findViewById(R.id.mediaProgressBar)
         mediaProgressCount = findViewById(R.id.mediaProgressCount)
+        mediaTimerText     = findViewById(R.id.mediaTimerText)
         progressCard      = findViewById(R.id.progressCard)
         phaseLabel        = findViewById(R.id.phaseLabel)
         progressBar       = findViewById(R.id.progressBar)
@@ -140,6 +143,7 @@ class MainActivity : AppCompatActivity() {
                 actionButtons.visibility = View.GONE
                 statusText.setOnLongClickListener(null)
                 stopTimer()
+                stopMediaTimer()
             }
 
             ProgressState.Phase.SCANNING -> {
@@ -155,11 +159,12 @@ class MainActivity : AppCompatActivity() {
             }
 
             ProgressState.Phase.UPLOADING -> {
+                val mediaStillUploading = p.mediaTotal > 0 && p.mediaCurrent < p.mediaTotal
                 showProgressCard(
                     title = "💬 Uploading conversations…",
-                    indeterminate = (p.mediaCurrent < p.mediaTotal), // indeterminate while media uploads
+                    indeterminate = mediaStillUploading,
                     current = p.current, total = p.total,
-                    message = p.message
+                    message = if (mediaStillUploading) "" else p.message
                 )
                 startTimerIfNeeded()
                 actionButtons.visibility = View.GONE
@@ -234,6 +239,7 @@ class MainActivity : AppCompatActivity() {
     private fun applyMediaCard(p: ProgressState.Progress) {
         if (p.mediaTotal <= 0) {
             mediaCard.visibility = View.GONE
+            stopMediaTimer()
             return
         }
         mediaCard.visibility = View.VISIBLE
@@ -243,10 +249,12 @@ class MainActivity : AppCompatActivity() {
             getColor(if (done) android.R.color.holo_green_dark else android.R.color.holo_blue_dark)
         )
         if (done) {
+            stopMediaTimer()
             mediaProgressBar.isIndeterminate = false
             mediaProgressBar.max      = p.mediaTotal
             mediaProgressBar.progress = p.mediaTotal
         } else {
+            startMediaTimerIfNeeded()
             mediaProgressBar.isIndeterminate = p.mediaCurrent == 0
             if (p.mediaCurrent > 0) {
                 mediaProgressBar.isIndeterminate = false
@@ -303,6 +311,25 @@ class MainActivity : AppCompatActivity() {
     private fun stopTimer() {
         timerJob?.cancel()
         timerJob = null
+    }
+
+    private fun startMediaTimerIfNeeded() {
+        if (mediaTimerJob?.isActive == true) return
+        if (ProgressState.mediaStartMs == 0L) return
+        mediaTimerJob = lifecycleScope.launch {
+            while (true) {
+                val elapsed = (System.currentTimeMillis() - ProgressState.mediaStartMs) / 1000
+                val mins    = elapsed / 60
+                val secs    = elapsed % 60
+                mediaTimerText.text = "⏱ %02d:%02d".format(mins, secs)
+                delay(1000)
+            }
+        }
+    }
+
+    private fun stopMediaTimer() {
+        mediaTimerJob?.cancel()
+        mediaTimerJob = null
     }
 
     // ── Scan ZIP ──────────────────────────────────────────────────────────────
