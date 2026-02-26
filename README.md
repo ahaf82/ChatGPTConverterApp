@@ -17,9 +17,8 @@ Android blocks APKs from outside the Play Store by default. You only need to do 
 
 ### Step 2 — Download the APK
 
-1. Go to the [**Releases page**](https://github.com/ahaf82/ChatGPTConverterApp/releases).
-2. Open the latest release.
-3. Under **Assets**, tap **`ChatGPTConverterApp.apk`** to download it.
+1. Go to the [**latest release**](https://github.com/ahaf82/ChatGPTConverterApp/releases/tag/v1.3).
+2. Under **Assets**, tap **`app-release.apk`** to download it.
 
 ### Step 3 — Install
 
