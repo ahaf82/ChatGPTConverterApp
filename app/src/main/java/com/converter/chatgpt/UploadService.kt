@@ -187,17 +187,29 @@ class UploadService : Service() {
 
                     // ── Find conversation JSON files ───────────────────────
                     val conversationEntries = run {
+                        // Only match a root-level conversations.json (ZipEntry.name has no path
+                        // separator for root entries). Using endsWith would also match
+                        // subfolder files like "user-XYZ/conversations.json" which are stubs.
                         val exact = allEntries.filter { !it.isDirectory &&
-                                it.name.endsWith("conversations.json") }
+                                it.name == "conversations.json" }
                         if (exact.isNotEmpty()) {
-                            AppLogger.i(TAG, "Found ${exact.size} conversations.json (old format)")
-                            return@run exact.sortedBy { it.name }
+                            AppLogger.i(TAG, "Found root-level conversations.json (old format)")
+                            return@run exact
                         }
+                        // Prefer root-level conversations-NNN.json over any inside subfolders.
+                        val rootNumbered = allEntries.filter { !it.isDirectory &&
+                                Regex("""^conversations-\d+\.json$""", RegexOption.IGNORE_CASE)
+                                    .matches(it.name) }
+                        if (rootNumbered.isNotEmpty()) {
+                            AppLogger.i(TAG, "Found ${rootNumbered.size} root-level numbered conversation files (new format)")
+                            return@run rootNumbered.sortedBy { it.name }
+                        }
+                        // Fall back to numbered files anywhere in the ZIP (e.g. inside a subfolder).
                         val numbered = allEntries.filter { !it.isDirectory &&
                                 Regex(""".*conversations-\d+\.json$""", RegexOption.IGNORE_CASE)
                                     .matches(it.name) }
                         if (numbered.isNotEmpty()) {
-                            AppLogger.i(TAG, "Found ${numbered.size} numbered conversation files (new format)")
+                            AppLogger.i(TAG, "Found ${numbered.size} numbered conversation files in subfolder (new format)")
                             return@run numbered.sortedBy { it.name }
                         }
                         val fuzzy = allEntries.filter { !it.isDirectory &&
